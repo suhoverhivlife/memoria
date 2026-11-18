@@ -111,8 +111,6 @@ dialog img{display:block;max-width:100%;max-height:86vh;margin:0 auto}
 .box button.g{background:transparent;color:var(--text);border-color:var(--line)}
 .box button:disabled{opacity:.6;cursor:default}
 .flame{font-size:1.6rem}
-#mus{position:fixed;right:16px;bottom:16px;z-index:30;min-height:44px;padding:0 18px;background:rgba(0,0,0,.88);color:var(--text);border:1px solid var(--line);font:500 .9375rem var(--sans);cursor:pointer}
-#mus:hover{border-color:var(--accent)}
 @media (min-width:720px){#g{grid-template-columns:repeat(3,1fr);gap:20px;max-width:900px}}
 .dd{position:relative}
 .dd-top::after{content:" ▾";font-size:.75em}
@@ -125,6 +123,9 @@ dialog img{display:block;max-width:100%;max-height:86vh;margin:0 auto}
   .dd-menu a{padding:10px 18px}
   .dd-menu a:hover{background:#15120F;color:var(--text)}
 }
+.candle-count{margin:14px 0 0;color:var(--muted);font-size:.9375rem}
+.candle-count b{color:var(--accent);font-weight:500}
+.candle:disabled{cursor:default}
 /* book */
 .book{border-top:1px solid var(--line);padding:48px 20px;text-align:center}
 .book p{max-width:560px;margin:10px auto 0;color:var(--muted)}
@@ -207,6 +208,7 @@ nav a[aria-current="page"]{color:var(--text)}
         <span>Запалити свічку</span>
       </button>
     </div>
+    <p class="candle-count" id="candle-count">Запалено свічок: <b id="candle-total">—</b></p>
   </div>
 
   <section id="heroes" class="wrap" aria-labelledby="heroes-title">
@@ -248,26 +250,42 @@ nav a[aria-current="page"]{color:var(--text)}
                 <p id="my"></p>
                 <p id="ms"></p>
                 <button id="play">▶ Слухати історію</button>
-                <button id="cand">🕯 Запалити свічку</button>
                 <button class="g" id="cl">Закрити</button>
-                <p><span class="flame" id="cf"></span> <span id="cc"></span></p>
             </div>
         </div>
     </div>
-<button class="g" id="mus">🔊 Музика</button>
 <audio id="bg" src="https://raw.githubusercontent.com/valentinzavershenyk-png/memoria/main/music.mp3" loop></audio>
 <audio id="vo"></audio>
 <script>
 (function () {
 
-  // --- Свічка пам'яті (стан лише на цій сторінці, без збереження) ---
+  // --- Свічка пам'яті: спільний лічильник (сервіс Abacus), одна свічка з одного пристрою ---
+  var CANDLE_API = 'https://abacus.jasoncameron.dev';
+  var CANDLE_NS = 'memoria-sukhoverkhiv', CANDLE_KEY = 'candles';
   var candle = document.getElementById('candle');
+  var candleTotal = document.getElementById('candle-total');
+  var lit = false, total = null;
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
+  function showCandle() {
+    candle.setAttribute('aria-pressed', lit ? 'true' : 'false');
+    candle.querySelector('span').textContent = lit ? 'Свічку запалено' : 'Запалити свічку';
+    candle.disabled = lit;
+    candleTotal.textContent = total === null ? '—' : String(total);
+  }
+  lit = store('memoria-candle-lit') === '1';
+  var cached = parseInt(store('memoria-candle-total'), 10); total = isNaN(cached) ? null : cached;
+  showCandle();
+  function candleCall(kind) {
+    return fetch(CANDLE_API + '/' + kind + '/' + CANDLE_NS + '/' + CANDLE_KEY)
+      .then(function (r) { if (r.status === 404 && kind === 'get') return { value: 0 }; if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { total = d.value; store('memoria-candle-total', String(total)); showCandle(); });
+  }
+  candleCall('get').catch(function () {});
   candle.addEventListener('click', function () {
-    var on = candle.getAttribute('aria-pressed') !== 'true';
-    candle.setAttribute('aria-pressed', on);
-    candle.querySelector('span').textContent = on ? 'Свічку запалено' : 'Запалити свічку';
+    if (lit) return;
+    lit = true; store('memoria-candle-lit', '1'); showCandle();
+    candleCall('hit').catch(function () { total = (total || 0) + 1; store('memoria-candle-total', String(total)); showCandle(); });
   });
-
   // --- Меню на телефоні ---
   var menu = document.getElementById('menu');
   var nav = document.getElementById('nav');
@@ -313,13 +331,13 @@ nav a[aria-current="page"]{color:var(--text)}
         let musicOn = true, started = false, cur = null;
 
         function startMusic() {
-            if (!started && musicOn) {
-                bg.play().catch(() => {});
-                started = true;
-            }
+            if (started || !musicOn) return;
+            const p = bg.play();
+            if (p && p.then) p.then(() => { started = true; }).catch(() => {});
+            else started = true;
         }
 
-        document.addEventListener('pointerdown', startMusic, {once: false});
+        ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, startMusic, {passive: true}));
         bg.play().then(() => started = true).catch(() => {});
 
         H.forEach(h => {
@@ -332,16 +350,6 @@ nav a[aria-current="page"]{color:var(--text)}
             t.onclick = () => open_(h);
             g.appendChild(t);
         });
-
-        const K = id => 'candle-' + id;
-
-        function upd() {
-            const n = localStorage.getItem(K(cur.id)) ? 1 : 0;
-            document.getElementById('cf').textContent = n ? '🕯' : '';
-            document.getElementById('cc').textContent = 'Запалено свічок на цьому пристрої: ' + n;
-            document.getElementById('cand').disabled = !!n;
-            document.getElementById('cand').textContent = n ? '🕯 Свічку запалено' : '🕯 Запалити свічку';
-        }
 
         function speak() {
             vo.src = BASE + cur.id + '-voice.mp3';
@@ -357,20 +365,10 @@ nav a[aria-current="page"]{color:var(--text)}
             my.textContent = h.years + ' · ' + h.village;
             ms.textContent = h.story;
             m.classList.add('on');
-            upd();
             speak();
         }
 
        play.onclick = speak;
-        mus.onclick = () => {
-            if (musicOn) {
-                bg.pause();
-            } else {
-                bg.play().catch(() => {});
-            }
-            musicOn = !musicOn;
-        };
-        cand.onclick = () => { try { localStorage.setItem(K(cur.id), '1'); } catch (e) {} upd(); };
 
         function close_() {
             vo.pause();
