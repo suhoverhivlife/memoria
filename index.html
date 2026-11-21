@@ -133,11 +133,11 @@ dialog img{display:block;max-width:100%;max-height:86vh;margin:0 auto}
 .pages{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;background:#000}
 .pages::-webkit-scrollbar{display:none}
 .pages figure{flex:0 0 100%;margin:0;scroll-snap-align:center}
-.pages img{display:block;width:100%;height:auto;aspect-ratio:1000/1375;background:#111;border:1px solid var(--line)}
+.pages canvas{display:block;width:100%;height:auto;aspect-ratio:1000/1375;background:#111;border:1px solid var(--line)}
+.pages figure.ready canvas{aspect-ratio:auto}
 .pg-meta{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;max-width:760px;margin:16px auto 0;padding-bottom:72px;color:var(--muted);font-size:.9375rem}
 .pg-meta a{color:var(--accent)}
 .book-hint{max-width:760px;margin:16px auto 0;padding:14px 18px;border:1px solid var(--accent);color:var(--text)}
-.pages figure.missing img{visibility:hidden}
 /* book */
 .book{border-top:1px solid var(--line);padding:48px 20px;text-align:center}
 .book p{max-width:560px;margin:10px auto 0;color:var(--muted)}
@@ -294,7 +294,7 @@ nav a[aria-current="page"]{color:var(--text)}
             </div>
         </div>
     </div>
-<audio id="bg" src="https://raw.githubusercontent.com/valentinzavershenyk-png/memoria/main/music.mp3" loop></audio>
+<audio id="bg" src="https://raw.githubusercontent.com/suhoverhivlife/memoria/main/music.mp3" loop></audio>
 <script>
 (function () {
 
@@ -363,31 +363,67 @@ nav a[aria-current="page"]{color:var(--text)}
     if (e.target.closest('.dd-menu a')) { dd.classList.add('shut'); if (document.activeElement) document.activeElement.blur(); }
   });
   dd.addEventListener('mouseleave', function () { dd.classList.remove('shut'); });
-  // --- «Історичне джерело»: сторінки книги (фото з GitHub, папка book/), гортання стрілками, свайпом і клавіатурою ---
-  var BOOK_BASE = 'https://raw.githubusercontent.com/valentinzavershenyk-png/memoria/main/book/';
-  var pages = ['Обкладинка', 'Про автора'], p;
-  for (p = 75; p <= 89; p++) pages.push('Перша світова війна · с. ' + p);
-  for (p = 118; p <= 136; p++) pages.push('Друга світова війна · с. ' + p);
+  // --- «Історичне джерело»: книга з PDF-файлів у репозиторії GitHub (PDF.js), гортання стрілками, свайпом і клавіатурою ---
+  var BOOK_BASE = 'https://raw.githubusercontent.com/suhoverhivlife/memoria/main/';
+  var PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
+  var parts = [
+    { file: 'ПАЛІТУРКА 001.pdf', caps: ['Обкладинка', 'Про автора'] },
+    { file: 'КНИГА СУХОВЕРХІВ-1 001.pdf', caps: [] },
+    { file: 'ДРУГА СВІТОВА-1 001.pdf', caps: [] }
+  ], p, pages = [];
+  for (p = 75; p <= 89; p++) parts[1].caps.push('Перша світова війна · с. ' + p);
+  for (p = 118; p <= 136; p++) parts[2].caps.push('Друга світова війна · с. ' + p);
+  parts.forEach(function (pt) {
+    pt.url = BOOK_BASE + encodeURIComponent(pt.file);
+    pt.caps.forEach(function (c, k) { pages.push({ part: pt, n: k + 1, cap: c }); });
+  });
   var bookHint = document.getElementById('book-hint');
   var track = document.getElementById('pages'), pgCount = document.getElementById('pg-count'), pgFull = document.getElementById('pg-full');
   var pgPrev = document.querySelector('.pager .prev'), pgNext = document.querySelector('.pager .next');
-  function pgFile(i) { return BOOK_BASE + String(i + 1).padStart(2, '0') + '.jpg'; }
-  pages.forEach(function (cap, i) {
-    var f = document.createElement('figure'), im = new Image();
-    im.alt = 'Сторінка книги ' + (i + 1) + ': ' + cap; im.loading = 'lazy'; im.decoding = 'async';
-    im.addEventListener('error', function () {
-      if (!im.dataset.fb) { im.dataset.fb = '1'; im.src = 'book/' + String(i + 1).padStart(2, '0') + '.jpg'; }   // запасний шлях: папка book поруч зі сторінкою
-      else { f.classList.add('missing'); bookHint.hidden = false; }
-    });
-    im.src = pgFile(i);
-    f.appendChild(im); track.appendChild(f);
+  var figs = [];
+  pages.forEach(function (pg, i) {
+    var f = document.createElement('figure'), c = document.createElement('canvas');
+    c.setAttribute('role', 'img'); c.setAttribute('aria-label', 'Сторінка книги ' + (i + 1) + ': ' + pg.cap);
+    f.appendChild(c); track.appendChild(f); figs.push(f);
   });
+  var pdfLib = null, bookStarted = false;
+  function loadScript(src) {
+    return new Promise(function (ok, no) {
+      var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s);
+    });
+  }
+  function bookFail() { bookHint.hidden = false; }
+  function renderPage(i) {
+    var f = figs[i]; if (!f || f.dataset.state) return;
+    f.dataset.state = 'busy';
+    var pg = pages[i];
+    pg.part.doc.then(function (doc) { return doc.getPage(pg.n); }).then(function (page) {
+      var base = page.getViewport({ scale: 1 });
+      var cssW = f.clientWidth || 700, ratio = Math.min(window.devicePixelRatio || 1, 2);
+      var vp = page.getViewport({ scale: Math.max(1, cssW * ratio / base.width) });
+      var c = f.querySelector('canvas'); c.width = vp.width; c.height = vp.height;
+      return page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    }).then(function () { f.dataset.state = 'done'; f.classList.add('ready'); })
+      .catch(function () { f.dataset.state = ''; bookFail(); });
+  }
+  function renderNear() { for (var k = pgIdx - 1; k <= pgIdx + 2; k++) renderPage(k); }
+  function startBook() {
+    if (bookStarted) return; bookStarted = true;
+    loadScript(PDFJS + 'pdf.min.js').then(function () {
+      pdfLib = window.pdfjsLib;
+      pdfLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob(['importScripts("' + PDFJS + 'pdf.worker.min.js");'], { type: 'text/javascript' }));
+      parts.forEach(function (pt) { pt.doc = pdfLib.getDocument({ url: pt.url }).promise; pt.doc.catch(bookFail); });
+      renderNear();
+    }).catch(function () { bookStarted = false; bookFail(); });
+  }
+  function maybeStart() { if (location.hash === '#source') startBook(); }
   var pgIdx = 0;
   function pgUpdate() {
     var w = track.clientWidth; if (!w) return;
     pgIdx = Math.max(0, Math.min(pages.length - 1, Math.round(track.scrollLeft / w)));
-    pgCount.textContent = 'Сторінка ' + (pgIdx + 1) + ' з ' + pages.length + ' · ' + pages[pgIdx];
-    pgFull.href = pgFile(pgIdx);
+    pgFull.href = pages[pgIdx].part.url + '#page=' + pages[pgIdx].n;
+    pgCount.textContent = 'Сторінка ' + (pgIdx + 1) + ' з ' + pages.length + ' · ' + pages[pgIdx].cap;
+    if (pdfLib) renderNear();
     pgPrev.disabled = pgIdx === 0; pgNext.disabled = pgIdx === pages.length - 1;
   }
   function pgGo(i) {
@@ -405,11 +441,11 @@ nav a[aria-current="page"]{color:var(--text)}
   document.querySelectorAll('.chips button[data-pg]').forEach(function (b) {
     b.addEventListener('click', function () { pgGo(parseInt(b.dataset.pg, 10)); });
   });
-  window.addEventListener('hashchange', pgUpdate); window.addEventListener('resize', pgUpdate); pgUpdate();
+  window.addEventListener('hashchange', function () { maybeStart(); pgUpdate(); }); window.addEventListener('resize', pgUpdate); pgUpdate(); maybeStart();
 })();
 </script>
 <script>
-        const BASE = 'https://raw.githubusercontent.com/valentinzavershenyk-png/memoria/main/';
+        const BASE = 'https://raw.githubusercontent.com/suhoverhivlife/memoria/main/';
         const H = [{"id":"darii","name":"Дарій Дмитро Кузьмович","years":"25.10.1971 – 28.10.2018","rank":"Солдат","village":"с. Суховерхів","story":"Дарій Дмитро Кузьмович — захисник України, солдат, навідник 3-го гірсько-штурмового відділення 2-го гірсько-штурмового взводу 1-ї гірсько-штурмової роти, житель села Суховерхів. Народився 25 жовтня 1971 року в селі Сергії Путильського району. Загинув 28 жовтня 2018 року біля населеного пункту Кримське Новоайдарського району Луганської області. Вічна пам'ять і слава Герою!"},{"id":"rakhmaiev","name":"Рахмаєв Юрій Олексійович","years":"24.11.1984 – 03.02.2023","rank":"Старший солдат","village":"с. Суховерхів","story":"Рахмаєв Юрій Олексійович (позивний «Дельфін») — захисник України, старший солдат, житель села Суховерхів. Народився 24 листопада 1984 року в селі Суховерхів. Загинув 3 лютого 2023 року в місті Бахмут Донецької області. Вічна пам'ять і слава Герою!"},{"id":"unhurian","name":"Унгурян Олександр Васильович","years":"09.08.1987 – 22.03.2023","rank":"Старший солдат","village":"с. Суховерхів","story":"Унгурян Олександр Васильович (позивний «Топор») — захисник України, старший солдат, житель села Суховерхів. Народився 9 серпня 1987 року в селі Суховерхів. Загинув 22 березня 2023 року в селі Іванівське Донецької області. Вічна пам'ять і слава Герою!"},{"id":"larionov","name":"Ларіонов Олександр Васильович","years":"28.02.1984 – 29.08.2023","rank":"Старший сержант, командир відділення","village":"с. Суховерхів","story":"Ларіонов Олександр Васильович (позивний «Ларік») — захисник України, старший сержант, командир відділення, житель села Суховерхів. Народився 28 лютого 1984 року в селі Турятка Глибоцького району Чернівецької області. Загинув 29 серпня 2023 року на Куп'янському напрямку Харківської області. Похований у селі Турятка Глибоцького району. Вічна пам'ять і слава Герою!"},{"id":"pidhoretskyi","name":"Підгорецький Михайло Вікторович","years":"05.03.1985 – 27.01.2025","rank":"Солдат","village":"с. Суховерхів","story":"Підгорецький Михайло Вікторович — військовослужбовець, солдат, житель села Суховерхів. Народився 5 березня 1985 року. Помер 27 січня 2025 року вдома. Вічна пам'ять і слава Герою!"},{"id":"romanko","name":"Романко Роман Васильович","years":"28.01.1975 – 17.04.2025","rank":"Солдат","village":"с. Суховерхів","story":"Романко Роман Васильович — захисник України, солдат, житель села Суховерхів. Народився 28 січня 1975 року в селі Суховерхів. Загинув 17 квітня 2025 року біля населеного пункту Осоївка Сумського району Сумської області. Вічна пам'ять і слава Герою!"},{"id":"melnychuk","name":"Мельничук Мирослав Михайлович","years":"25.08.1992 – 29.09.2025","rank":"Солдат","village":"с. Суховерхів","story":"Мельничук Мирослав Михайлович — захисник України, солдат, житель села Суховерхів. Народився 25 серпня 1992 року в місті Кіцмань. Загинув 29 вересня 2025 року внаслідок вибухової травми неподалік населеного пункту Обухівка Куп'янського району Харківської області. Вічна пам'ять і слава Герою!"},{"id":"sukhar","name":"Сухарь Григорій Васильович","years":"09.02.1984 – 10.04.2023","rank":"Солдат","village":"с. Суховерхів","story":"Сухарь Григорій Васильович — захисник України, солдат, житель села Суховерхів. Народився 9 лютого 1984 року в селі Суховерхів. З 10 квітня 2023 року вважався зниклим безвісти в районі населеного пункту Бахмут Донецької області; загинув під час виконання обов'язків військової служби при веденні бойових дій. Поховання відбулося 14 грудня 2025 року. Вічна пам'ять і слава Герою!"},{"id":"heshko","name":"Гешко Михайло Іванович","years":"21.11.1995 – 14.02.2026","rank":"Капрал поліції","village":"с. Суховерхів","story":"Гешко Михайло Іванович — захисник України, капрал поліції, поліцейський взводу №1 роти №1 батальйону поліції особливого призначення (стрілецький) ГУНП в Чернівецькій області, житель села Суховерхів. Народився 21 листопада 1995 року в селі Суховерхів. Загинув 14 лютого 2026 року поблизу населеного пункту Шевченко Покровського району Донецької області. Вічна пам'ять і слава Герою!"},{"id":"nezviskyi","name":"Незвиський Микола Васильович","years":"18.12.1979 – 19.12.2024","rank":"Сержант","village":"с. Суховерхів","story":"Незвиський Микола Васильович — захисник України, сержант військової частини А0224, житель села Суховерхів. Народився 18 грудня 1979 року в селі Суховерхів. З 19 грудня 2024 року вважався зниклим безвісти; загинув в обороні села Янтарне Покровського району Донецької області. Похований 23 травня 2026 року. Вічна пам'ять і слава Герою!"},{"id":"brynzylo","name":"Бринзило Віталій Георгійович","years":"29.10.1974 – 15.09.2026","rank":"Солдат","village":"с. Суховерхів","story":"Бринзило Віталій Георгійович — військовослужбовець, солдат, житель села Суховерхів. Народився 29 жовтня 1974 року. Пропав безвісти 15 вересня 2026 року. Слава Герою!"}];
 
         const g = document.getElementById('g'), bg = document.getElementById('bg');
